@@ -1,34 +1,59 @@
+
 'use strict';
 // routes/payments.js
-//
-// YOUR TASK: make POST /payments idempotent.
-//
-// Right now this handler charges the card on EVERY request, so a retried request
-// (same purchase, sent twice because of a lost response or a double-tap) creates a
-// duplicate charge. Fix it using an Idempotency-Key so a retry is processed exactly once.
-//
-// The in-memory helpers you need are in ../store:
-//   idempotency  — a Map you use as  key -> { status, body }
-//   charges      — the array of REAL charges (push once per real charge)
-//   nextChargeId — returns a fresh 'ch_N' id
-//
-// Implement these four rules (checked by the tests):
-//   1. MISSING key   -> respond 400 with { error: { code: 'IDEMPOTENCY_KEY_REQUIRED', ... } }
-//   2. REPEAT key    -> return the stored response; do NOT create a new charge
-//   3. NEW key       -> create exactly ONE charge, store { status, body } under the key, return it
-//   4. DIFFERENT key -> a separate operation (falls out of rules 2 and 3 naturally)
-//
-// Hint: read the key from  req.headers['idempotency-key'].
 
 const router = require('express').Router();
 const { charges, idempotency, nextChargeId } = require('../store');
 
 router.post('/', (req, res) => {
-  // TODO: implement rules 1-3 above. The stub below always charges — remove it.
+
+  // Step 1: Read the Idempotency-Key header
+  const key = req.headers['idempotency-key'];
+
+  // Step 2: Reject requests without an idempotency key
+  if (!key) {
+    return res.status(400).json({
+      error: {
+        code: 'IDEMPOTENCY_KEY_REQUIRED',
+        message: 'Idempotency-Key header is required'
+      }
+    });
+  }
+
+  // Step 3: Check if the key already exists
+  if (idempotency.has(key)) {
+    const saved = idempotency.get(key);
+
+    return res.status(saved.status).json(saved.body);
+  }
+
+  // Step 4: Create a new charge
   const amount = req.body && req.body.amount;
-  const charge = { id: nextChargeId(), amount, status: 'charged' };
+
+  const charge = {
+    id: nextChargeId(),
+    amount,
+    status: 'charged'
+  };
+
+  // Step 5: Add the charge to the charges array
   charges.push(charge);
-  return res.status(201).json({ id: charge.id, amount: charge.amount, status: charge.status });
+
+  // Step 6: Prepare the response body
+  const body = {
+    id: charge.id,
+    amount: charge.amount,
+    status: charge.status
+  };
+
+  // Step 7: Store the key and complete response
+  idempotency.set(key, {
+    status: 201,
+    body: body
+  });
+
+  // Step 8: Return the response
+  return res.status(201).json(body);
 });
 
 module.exports = router;
